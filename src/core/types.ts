@@ -102,6 +102,22 @@ export interface SourcedConfig {
   speedMs?: number; // 配置 URL 响应时间
 }
 
+// 名称定制配置
+export interface NameTransformConfig {
+  prefix?: string;
+  suffix?: string;
+  promoReplacement?: string;
+  extraCleanPatterns?: string[];
+}
+
+// JSON 导入结果
+export interface ImportResult {
+  type: 'multi' | 'single';
+  added: number;
+  duplicates: number;
+  sources: string[];
+}
+
 // 平台无关的应用配置
 export interface AppConfig {
   adminToken?: string;

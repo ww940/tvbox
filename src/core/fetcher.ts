@@ -131,7 +131,7 @@ async function fetchSingleConfig(
  * 解析配置 JSON，容错处理
  * 有些配置可能有 BOM 头、注释或其他非标准格式
  */
-function parseConfigJson(text: string): TVBoxConfig | null {
+export function parseConfigJson(text: string): TVBoxConfig | null {
   // 去掉 BOM
   let cleaned = text.replace(/^\uFEFF/, '');
 
@@ -175,7 +175,7 @@ function tryParseJson(text: string): Record<string, unknown> | null {
  * - storeHouse: {"storeHouse": [{"sourceName": "...", "sourceUrl": "..."}]}
  * - urls: {"urls": [{"name": "...", "url": "..."}]}（需排除有 sites 的单仓）
  */
-function isMultiRepoConfig(config: TVBoxConfig): boolean {
+export function isMultiRepoConfig(config: TVBoxConfig): boolean {
   const raw = config as Record<string, unknown>;
   if (Array.isArray(raw.storeHouse)) return true;
   if (Array.isArray(raw.urls) && !config.sites) return true;
@@ -185,7 +185,7 @@ function isMultiRepoConfig(config: TVBoxConfig): boolean {
 /**
  * 从多仓 JSON 中提取子源 URL 列表
  */
-function extractMultiRepoEntries(config: TVBoxConfig, parentName: string): SourceEntry[] {
+export function extractMultiRepoEntries(config: TVBoxConfig, parentName: string): SourceEntry[] {
   const raw = config as Record<string, unknown>;
   const entries: SourceEntry[] = [];
 
