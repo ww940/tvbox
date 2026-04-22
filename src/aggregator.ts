@@ -1,14 +1,14 @@
 // 聚合流程编排
 
 import type { Storage } from './storage/interface';
-import type { AppConfig, SourceEntry, SourcedConfig, MacCMSSourceEntry, LiveSourceEntry, TVBoxLive } from './core/types';
+import type { AppConfig, SourceEntry, SourcedConfig, MacCMSSourceEntry, LiveSourceEntry, TVBoxLive, SourceFetchResult, SourceHealthRecord } from './core/types';
 import { fetchConfigs } from './core/fetcher';
 import { mergeConfigs, cleanLocalRefs, cleanEmptyEntries } from './core/merger';
 import { batchSiteSpeedTest, appendSpeedToName, filterUnreachableSites } from './core/speedtest';
 import { macCMSToTVBoxSites, processMacCMSForLocal } from './core/maccms';
 import { rewriteJarUrls } from './core/jar-proxy';
 import { batchTestLiveSources, liveSourcesToTVBoxLives } from './core/live-source';
-import { KV_MERGED_CONFIG, KV_MERGED_CONFIG_FULL, KV_SOURCE_URLS, KV_LAST_UPDATE, KV_MANUAL_SOURCES, KV_MACCMS_SOURCES, KV_LIVE_SOURCES, KV_BLACKLIST, KV_INLINE_PREFIX, KV_NAME_TRANSFORM } from './core/config';
+import { KV_MERGED_CONFIG, KV_MERGED_CONFIG_FULL, KV_SOURCE_URLS, KV_LAST_UPDATE, KV_MANUAL_SOURCES, KV_MACCMS_SOURCES, KV_LIVE_SOURCES, KV_BLACKLIST, KV_INLINE_PREFIX, KV_NAME_TRANSFORM, KV_SOURCE_HEALTH } from './core/config';
 import { loadBlacklist, applyBlacklist, pruneBlacklist, saveBlacklist } from './core/blacklist';
 import { transformSiteNames } from './core/cleaner';
 import { parseConfigJson } from './core/fetcher';
@@ -80,7 +80,10 @@ async function _runAggregation(storage: Storage, config: AppConfig, startTime: n
 
   // Step 2: 批量 fetch 配置 JSON
   console.log('[aggregation] Step 2: Fetching configs...');
-  const sourcedConfigs = await fetchConfigs(remoteSources, config.fetchTimeoutMs);
+  const { configs: sourcedConfigs, fetchResults } = await fetchConfigs(remoteSources, config.fetchTimeoutMs);
+
+  // 更新源健康状态
+  await updateSourceHealth(storage, fetchResults);
 
   if (sourcedConfigs.length === 0 && inlineConfigs.length === 0 && macCMSConfigs.length === 0) {
     console.warn('[aggregation] No valid configs fetched and no MacCMS/inline sources, keeping previous cache');
@@ -297,4 +300,64 @@ async function processLiveSources(
 
   console.log(`[aggregation] Produced ${lives.length} TVBoxLive entries`);
   return lives;
+}
+
+/**
+ * 更新源健康状态：读取历史 → merge 本次 fetch 结果 → 写回
+ */
+async function updateSourceHealth(storage: Storage, fetchResults: SourceFetchResult[]): Promise<void> {
+  if (fetchResults.length === 0) return;
+
+  const now = new Date().toISOString();
+
+  // 读取历史健康记录
+  const raw = await storage.get(KV_SOURCE_HEALTH);
+  const oldRecords: SourceHealthRecord[] = raw ? JSON.parse(raw) : [];
+  const oldMap = new Map(oldRecords.map(r => [r.url, r]));
+
+  // 本次参与 fetch 的 URL 集合
+  const fetchedUrls = new Set(fetchResults.map(r => r.url));
+
+  // Merge 逻辑
+  const newRecords: SourceHealthRecord[] = [];
+
+  for (const fr of fetchResults) {
+    const old = oldMap.get(fr.url);
+
+    if (fr.status === 'ok') {
+      newRecords.push({
+        url: fr.url,
+        name: fr.name,
+        latestStatus: 'ok',
+        consecutiveFailures: 0,
+        lastSuccessTime: now,
+        lastFailTime: old?.lastFailTime,
+        lastFailReason: old?.lastFailReason,
+        lastSpeedMs: fr.speedMs,
+      });
+    } else {
+      newRecords.push({
+        url: fr.url,
+        name: fr.name,
+        latestStatus: fr.status,
+        consecutiveFailures: (old?.consecutiveFailures ?? 0) + 1,
+        lastSuccessTime: old?.lastSuccessTime,
+        lastFailTime: now,
+        lastFailReason: fr.errorMessage,
+        lastSpeedMs: old?.lastSpeedMs,
+      });
+    }
+  }
+
+  // 保留未参与本次 fetch 的历史记录（源可能被临时排除但还在列表中）
+  // 但已被用户删除的源不应保留——这由 fetchResults 只包含当前源列表来保证
+  // 如果老记录的 URL 不在本次 fetch 中，丢弃（源已被删除）
+  // 注：inline:// 源不经过 fetcher，不会出现在 fetchResults 中，也不需要追踪
+
+  const failCount = newRecords.filter(r => r.consecutiveFailures > 0).length;
+  if (failCount > 0) {
+    console.log(`[aggregation] Source health: ${newRecords.length - failCount} ok, ${failCount} failing`);
+  }
+
+  await storage.put(KV_SOURCE_HEALTH, JSON.stringify(newRecords));
 }

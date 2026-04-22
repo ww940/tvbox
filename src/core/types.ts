@@ -119,6 +119,29 @@ export interface ImportResult {
   sources: string[];
 }
 
+// 单次 fetch 结果（内部传递，不持久化）
+export type SourceFetchStatus = 'ok' | 'http_error' | 'decode_error' | 'parse_error' | 'timeout' | 'network_error';
+
+export interface SourceFetchResult {
+  url: string;
+  name: string;
+  status: SourceFetchStatus;
+  errorMessage?: string;
+  speedMs?: number;
+}
+
+// 持久化的源健康记录
+export interface SourceHealthRecord {
+  url: string;
+  name: string;
+  latestStatus: SourceFetchStatus;
+  consecutiveFailures: number;
+  lastSuccessTime?: string;
+  lastFailTime?: string;
+  lastFailReason?: string;
+  lastSpeedMs?: number;
+}
+
 // 平台无关的应用配置
 export interface AppConfig {
   adminToken?: string;

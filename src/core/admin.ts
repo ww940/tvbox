@@ -110,6 +110,58 @@ ${sharedStyles}
   resize:vertical;
 }
 
+/* Source health dot in list items */
+.source-health-dot{
+  width:8px;height:8px;
+  border-radius:50%;
+  flex-shrink:0;
+  position:relative;
+  cursor:default;
+}
+
+.source-health-dot.ok{
+  background:var(--green);
+  box-shadow:0 0 4px var(--green-glow);
+}
+
+.source-health-dot.warn{
+  background:var(--amber);
+  box-shadow:0 0 4px var(--amber-dim);
+}
+
+.source-health-dot.error{
+  background:var(--red);
+  box-shadow:0 0 4px var(--red-dim);
+}
+
+.source-health-dot.unknown{
+  background:var(--text-dim);
+}
+
+.source-health-dot::after{
+  content:attr(data-tooltip);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 8px);
+  transform:translateX(-50%);
+  padding:6px 10px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  border-radius:4px;
+  font-family:var(--mono);
+  font-size:0.6rem;
+  color:var(--text);
+  white-space:nowrap;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity 0.2s;
+  z-index:10;
+}
+
+.source-health-dot:hover::after{
+  opacity:1;
+}
+
 @media(max-width:560px){
   .nt-grid{grid-template-columns:1fr}
   .tabs{overflow-x:auto;flex-wrap:nowrap}
@@ -348,6 +400,8 @@ const translations = {
     cronEvery1h:'Every 1 hour', cronEvery3h:'Every 3 hours', cronEvery6h:'Every 6 hours',
     cronEvery12h:'Every 12 hours', cronEveryDay:'Once a day',
     save:'Save', saving:'Saving...', saved:'Saved', saveFailed:'Save failed',
+    noHealthData:'No data yet', healthFails:'Fails',
+    healthLastOk:'Last OK',
     footer:'TVBox Source Aggregator &middot; Admin Console',
   },
   zh: {
@@ -393,6 +447,8 @@ const translations = {
     cronEvery1h:'每 1 小时', cronEvery3h:'每 3 小时', cronEvery6h:'每 6 小时',
     cronEvery12h:'每 12 小时', cronEveryDay:'每天一次',
     save:'保存', saving:'保存中...', saved:'已保存', saveFailed:'保存失败',
+    noHealthData:'暂无数据', healthFails:'失败',
+    healthLastOk:'最后成功',
     footer:'TVBox 源聚合器 &middot; 管理控制台',
   }
 };
@@ -418,8 +474,23 @@ function switchTab(tab) {
   });
 }
 
+// --- Source health ---
+let healthMap = {};
+
+async function loadSourceHealth() {
+  try {
+    const res = await fetch('/source-status');
+    const records = await res.json();
+    healthMap = {};
+    records.forEach(r => { healthMap[r.url] = r; });
+  } catch {
+    healthMap = {};
+  }
+}
+
 // --- Load data ---
-function loadAll() {
+async function loadAll() {
+  await loadSourceHealth();
   loadSources();
   loadMacCMS();
   loadLives();
@@ -464,8 +535,17 @@ async function loadSources() {
       return;
     }
 
-    list.innerHTML = sources.map(s => \`
-      <div class="source-item">
+    list.innerHTML = sources.map(s => {
+      const h = healthMap[s.url];
+      const level = !h ? 'unknown'
+        : h.consecutiveFailures >= 5 ? 'error'
+        : h.consecutiveFailures >= 3 ? 'warn' : 'ok';
+      const tip = !h ? t('noHealthData')
+        : h.latestStatus + ' | ' + t('healthFails') + ': ' + h.consecutiveFailures +
+          (h.lastSuccessTime ? ' | ' + t('healthLastOk') + ': ' + new Date(h.lastSuccessTime).toLocaleString() : '');
+
+      return \`<div class="source-item">
+        <span class="source-health-dot \${level}" data-tooltip="\${esc(tip)}"></span>
         <div class="source-info">
           <div class="source-name">\${esc(s.name || 'Unnamed')}\${s.configKey ? ' 🔑' : ''}</div>
           <div class="source-url">\${esc(s.url)}</div>
@@ -473,8 +553,8 @@ async function loadSources() {
         <div class="source-actions">
           <button class="btn btn-sm btn-danger" onclick="removeSource('\${esc(s.url)}')">\${t('remove')}</button>
         </div>
-      </div>
-    \`).join('');
+      </div>\`;
+    }).join('');
   } catch {
     list.innerHTML = '<div class="empty">' + t('failedLoad') + '</div>';
   }

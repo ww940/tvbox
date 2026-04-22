@@ -184,6 +184,111 @@ ${sharedStyles}
   background:var(--red-dim);
 }
 
+/* Source Health Section */
+.health-section{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:20px 24px;
+  margin-bottom:32px;
+  animation:fadeSlideUp 0.5s ease-out 0.32s both;
+}
+
+.health-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:8px;
+}
+
+.health-label{
+  font-family:var(--mono);
+  font-size:0.7rem;
+  letter-spacing:0.15em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+
+.health-counts{
+  display:flex;
+  gap:16px;
+  font-family:var(--mono);
+  font-size:0.75rem;
+}
+
+.health-count{
+  display:flex;
+  align-items:center;
+  gap:4px;
+}
+
+.health-count.ok{color:var(--green)}
+.health-count.warn{color:var(--amber)}
+.health-count.error{color:var(--red)}
+
+.health-dot{
+  width:6px;height:6px;
+  border-radius:50%;
+  display:inline-block;
+}
+
+.health-dot.ok{background:var(--green);box-shadow:0 0 6px var(--green-glow)}
+.health-dot.warn{background:var(--amber);box-shadow:0 0 6px var(--amber-dim)}
+.health-dot.error{background:var(--red);box-shadow:0 0 6px var(--red-dim)}
+
+.health-table-wrap{
+  overflow-x:auto;
+  margin-top:12px;
+}
+
+.health-table{
+  width:100%;
+  border-collapse:collapse;
+  font-family:var(--mono);
+  font-size:0.7rem;
+}
+
+.health-table th{
+  text-align:left;
+  padding:8px 10px;
+  font-size:0.6rem;
+  letter-spacing:0.12em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+
+.health-table td{
+  padding:8px 10px;
+  border-bottom:1px solid var(--border);
+  color:var(--text);
+  white-space:nowrap;
+}
+
+.health-table tr:last-child td{border-bottom:none}
+
+.health-table .url-cell{
+  max-width:200px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  color:var(--text-dim);
+}
+
+.health-table .status-ok{color:var(--green)}
+.health-table .status-warn{color:var(--amber)}
+.health-table .status-error{color:var(--red)}
+
+.health-table tr.row-error td{background:var(--red-dim)}
+.health-table tr.row-warn td{background:var(--amber-dim)}
+
+@media(max-width:560px){
+  .health-summary{flex-direction:column;align-items:flex-start}
+  .health-table{font-size:0.6rem}
+  .health-table .url-cell{max-width:120px}
+}
+
 /* Config URL section */
 .config-section{
   background:var(--surface);
@@ -317,6 +422,37 @@ ${sharedStyles}
     </button>
   </div>
 
+  <div class="health-section">
+    <div class="health-summary">
+      <div class="health-label" data-i18n="sourceHealth">Source Health</div>
+      <div class="health-counts">
+        <span class="health-count ok"><span class="health-dot ok"></span> <span id="healthOk">-</span> OK</span>
+        <span class="health-count warn"><span class="health-dot warn"></span> <span id="healthWarn">-</span> WARN</span>
+        <span class="health-count error"><span class="health-dot error"></span> <span id="healthError">-</span> ERR</span>
+      </div>
+    </div>
+    <div class="collapsible-toggle" id="healthToggle" onclick="toggleCollapsible(this)" data-i18n="healthDetails">Details</div>
+    <div class="collapsible-body" id="healthBody">
+      <div class="health-table-wrap">
+        <table class="health-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th data-i18n="healthName">Name</th>
+              <th>URL</th>
+              <th data-i18n="healthStatus">Status</th>
+              <th data-i18n="healthFails">Fails</th>
+              <th data-i18n="healthLastOk">Last OK</th>
+            </tr>
+          </thead>
+          <tbody id="healthTableBody">
+            <tr><td colspan="6" class="empty">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="config-section">
     <div class="config-label" data-i18n="configUrlLabel">TVBox Config URL</div>
     <div class="config-url-row">
@@ -348,6 +484,9 @@ const translations = {
     configUrlLabel:'TVBox Config URL', liveConfigUrlLabel:'Live-Only Config URL',
     copy:'Copy', copied:'Copied!', neverRefresh:'Never — trigger a refresh',
     fetchError:'Failed to fetch status', noData:'No data',
+    sourceHealth:'Source Health', healthDetails:'Details', healthName:'Name',
+    healthStatus:'Status', healthFails:'Fails', healthLastOk:'Last OK',
+    healthNoData:'No health data yet', healthNever:'--',
     footer:'TVBox Source Aggregator &middot; Cron 05:00 UTC Daily',
     navAdmin:'Admin', navConfigEditor:'Config Editor',
   },
@@ -358,6 +497,9 @@ const translations = {
     configUrlLabel:'TVBox 配置地址', liveConfigUrlLabel:'直播配置地址',
     copy:'复制', copied:'已复制!', neverRefresh:'从未更新 — 点击刷新',
     fetchError:'获取状态失败', noData:'无数据',
+    sourceHealth:'源健康状态', healthDetails:'详情', healthName:'名称',
+    healthStatus:'状态', healthFails:'失败', healthLastOk:'最后成功',
+    healthNoData:'暂无健康数据', healthNever:'--',
     footer:'TVBox 源聚合器 &middot; 每日 UTC 05:00 定时任务',
     navAdmin:'管理', navConfigEditor:'配置编辑',
   }
@@ -459,10 +601,78 @@ function copyUrl(elementId) {
   });
 }
 
+const STATUS_LABELS = {
+  ok:'OK', http_error:'HTTP ERR', decode_error:'DECODE ERR',
+  parse_error:'PARSE ERR', timeout:'TIMEOUT', network_error:'NET ERR'
+};
+
+async function loadSourceHealth() {
+  try {
+    const res = await fetch('/source-status');
+    const records = await res.json();
+
+    let ok = 0, warn = 0, err = 0;
+    records.forEach(r => {
+      if (r.consecutiveFailures >= 5) err++;
+      else if (r.consecutiveFailures >= 3) warn++;
+      else ok++;
+    });
+
+    $('healthOk').textContent = ok;
+    $('healthWarn').textContent = warn;
+    $('healthError').textContent = err;
+
+    records.sort((a, b) => b.consecutiveFailures - a.consecutiveFailures);
+    renderHealthTable(records);
+
+    // 智能折叠：有 error 级别时自动展开
+    const toggle = $('healthToggle');
+    const body = $('healthBody');
+    if (err > 0 && !toggle.classList.contains('open')) {
+      toggle.classList.add('open');
+      body.classList.add('open');
+    }
+  } catch {
+    $('healthTableBody').innerHTML =
+      '<tr><td colspan="6" class="empty">' + t('fetchError') + '</td></tr>';
+  }
+}
+
+function renderHealthTable(records) {
+  if (!records.length) {
+    $('healthTableBody').innerHTML =
+      '<tr><td colspan="6" class="empty">' + t('healthNoData') + '</td></tr>';
+    return;
+  }
+
+  $('healthTableBody').innerHTML = records.map(r => {
+    const level = r.consecutiveFailures >= 5 ? 'error'
+               : r.consecutiveFailures >= 3 ? 'warn' : 'ok';
+    const statusLabel = STATUS_LABELS[r.latestStatus] || r.latestStatus;
+
+    const lastOk = r.lastSuccessTime
+      ? new Date(r.lastSuccessTime).toLocaleString('zh-CN', {
+          month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
+        })
+      : t('healthNever');
+
+    return '<tr class="row-' + level + '">' +
+      '<td><span class="health-dot ' + level + '"></span></td>' +
+      '<td>' + esc(r.name || 'Unnamed') + '</td>' +
+      '<td class="url-cell" title="' + esc(r.url) + '">' + esc(r.url) + '</td>' +
+      '<td class="status-' + level + '">' + statusLabel + '</td>' +
+      '<td>' + r.consecutiveFailures + '</td>' +
+      '<td>' + lastOk + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
 applyTheme(getTheme());
 applyLang(translations, getLang());
 loadStatus();
+loadSourceHealth();
 setInterval(loadStatus, 60000);
+setInterval(loadSourceHealth, 60000);
 </script>
 </body>
 </html>`;

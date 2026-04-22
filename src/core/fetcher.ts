@@ -2,26 +2,32 @@
 
 import { DEFAULT_FETCH_TIMEOUT_MS } from './config';
 import { decodeConfigResponse } from './decoder';
-import type { TVBoxConfig, SourcedConfig, SourceEntry } from './types';
+import type { TVBoxConfig, SourcedConfig, SourceEntry, SourceFetchResult } from './types';
 
 const MAX_MULTI_REPO_DEPTH = 3; // 多仓最大展开深度
+
+export interface FetchConfigsResult {
+  configs: SourcedConfig[];
+  fetchResults: SourceFetchResult[];
+}
 
 /**
  * 批量获取配置 JSON，并发执行，带超时
  * 自动检测多仓格式（storeHouse / urls），递归展开（最多 3 层）
- * 返回成功获取的配置列表（失败的静默跳过）
+ * 返回成功获取的配置列表 + 每个源的 fetch 结果（含失败原因）
  */
 export async function fetchConfigs(
   sources: SourceEntry[],
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
-): Promise<SourcedConfig[]> {
+): Promise<FetchConfigsResult> {
   const configs: SourcedConfig[] = [];
+  const fetchResults: SourceFetchResult[] = [];
   const seen = new Set<string>(); // URL 去重，防循环引用
 
-  await expandSources(sources, configs, seen, timeoutMs, 0);
+  await expandSources(sources, configs, fetchResults, seen, timeoutMs, 0);
 
   console.log(`[fetcher] Fetched ${configs.length} configs from ${sources.length} top-level sources`);
-  return configs;
+  return { configs, fetchResults };
 }
 
 /**
@@ -30,6 +36,7 @@ export async function fetchConfigs(
 async function expandSources(
   sources: SourceEntry[],
   configs: SourcedConfig[],
+  fetchResults: SourceFetchResult[],
   seen: Set<string>,
   timeoutMs: number,
   depth: number,
@@ -54,36 +61,61 @@ async function expandSources(
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
+    const source = uniqueSources[i];
     if (result.status === 'fulfilled' && result.value) {
-      if (isMultiRepoConfig(result.value.config)) {
-        const children = extractMultiRepoEntries(result.value.config, result.value.sourceName);
-        console.log(`[fetcher] Multi-repo: ${uniqueSources[i].url} → ${children.length} sub-sources`);
+      const { config: fetchedConfig, fetchResult } = result.value;
+      fetchResults.push(fetchResult);
+
+      if (fetchResult.status !== 'ok') {
+        // 失败的，已记录到 fetchResults，跳过
+        continue;
+      }
+
+      if (isMultiRepoConfig(fetchedConfig!)) {
+        const children = extractMultiRepoEntries(fetchedConfig!, fetchResult.name);
+        console.log(`[fetcher] Multi-repo: ${source.url} → ${children.length} sub-sources`);
         if (depth < MAX_MULTI_REPO_DEPTH) {
           multiRepoChildren.push(...children);
         } else {
-          console.log(`[fetcher] Max depth reached, skipping expansion of ${uniqueSources[i].url}`);
+          console.log(`[fetcher] Max depth reached, skipping expansion of ${source.url}`);
         }
       } else {
-        configs.push(result.value);
+        configs.push({
+          sourceUrl: source.url,
+          sourceName: source.name,
+          config: fetchedConfig!,
+          speedMs: fetchResult.speedMs,
+        });
       }
     } else if (result.status === 'rejected') {
-      console.warn(`[fetcher] Failed: ${uniqueSources[i].url}: ${result.reason}`);
+      console.warn(`[fetcher] Failed: ${source.url}: ${result.reason}`);
+      fetchResults.push({
+        url: source.url,
+        name: source.name,
+        status: 'network_error',
+        errorMessage: String(result.reason),
+      });
     }
   }
 
   // 递归展开子多仓
   if (multiRepoChildren.length > 0) {
-    await expandSources(multiRepoChildren, configs, seen, timeoutMs, depth + 1);
+    await expandSources(multiRepoChildren, configs, fetchResults, seen, timeoutMs, depth + 1);
   }
 }
 
+interface SingleFetchResult {
+  config: TVBoxConfig | null;
+  fetchResult: SourceFetchResult;
+}
+
 /**
- * 获取单个配置 JSON
+ * 获取单个配置 JSON，返回结构化结果（成功或失败原因）
  */
 async function fetchSingleConfig(
   source: SourceEntry,
   timeoutMs: number,
-): Promise<SourcedConfig | null> {
+): Promise<SingleFetchResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -99,35 +131,49 @@ async function fetchSingleConfig(
 
     if (!response.ok) {
       console.warn(`[fetcher] ${source.url} returned ${response.status}`);
-      return null;
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'http_error', errorMessage: `HTTP ${response.status}` },
+      };
     }
 
     const buffer = await response.arrayBuffer();
     const decoded = await decodeConfigResponse(buffer, source.configKey);
     if (!decoded) {
       console.warn(`[fetcher] ${source.url} returned undecodable content`);
-      return null;
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'decode_error', errorMessage: 'Undecodable content' },
+      };
     }
+
     const config = parseConfigJson(decoded);
     if (!config) {
       console.warn(`[fetcher] ${source.url} returned invalid JSON after decoding`);
-      return null;
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'parse_error', errorMessage: 'Invalid JSON' },
+      };
     }
 
     const speedMs = Date.now() - startTime;
-
     return {
-      sourceUrl: source.url,
-      sourceName: source.name,
       config,
-      speedMs,
+      fetchResult: { url: source.url, name: source.name, status: 'ok', speedMs },
     };
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('abort')) {
       console.warn(`[fetcher] ${source.url} timed out (${timeoutMs}ms)`);
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'timeout', errorMessage: `Timeout (${timeoutMs}ms)` },
+      };
     }
-    return null;
+    return {
+      config: null,
+      fetchResult: { url: source.url, name: source.name, status: 'network_error', errorMessage: msg },
+    };
   } finally {
     clearTimeout(timer);
   }
