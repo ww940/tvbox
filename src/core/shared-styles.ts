@@ -32,17 +32,17 @@ export const sharedStyles = `
   --surface-2:#eef1f5;
   --border:#d4dae3;
   --border-glow:#b8c2d0;
-  --green:#00b37e;
-  --green-dim:#00b37e1a;
-  --green-glow:#00b37e33;
-  --amber:#d08a20;
-  --amber-dim:#d08a201a;
-  --red:#e0304d;
-  --red-dim:#e0304d1a;
-  --blue:#3a8ee6;
-  --blue-dim:#3a8ee61a;
+  --green:#008c63;
+  --green-dim:#008c6320;
+  --green-glow:#008c6340;
+  --amber:#b87a10;
+  --amber-dim:#b87a1020;
+  --red:#d02040;
+  --red-dim:#d0204020;
+  --blue:#2d7cd6;
+  --blue-dim:#2d7cd620;
   --text:#2c3e50;
-  --text-dim:#8896a7;
+  --text-dim:#6b7d8f;
   --text-bright:#1a202c;
 }
 
@@ -377,7 +377,7 @@ body::before{
   background:var(--surface);
   border:1px solid var(--border);
   border-radius:4px;
-  color:#fff;
+  color:var(--text-bright);
   outline:none;
   transition:border-color 0.2s;
 }
@@ -474,7 +474,7 @@ body::before{
 .source-name{
   font-family:var(--sans);
   font-size:0.85rem;
-  color:#fff;
+  color:var(--text-bright);
   font-weight:500;
   margin-bottom:2px;
   white-space:nowrap;
@@ -508,7 +508,7 @@ body::before{
   background:var(--bg);
   border:1px solid var(--border);
   border-radius:4px;
-  color:#fff;
+  color:var(--text-bright);
   outline:none;
   transition:border-color 0.2s;
 }
